@@ -1,0 +1,334 @@
+CREATE OR REPLACE PROCEDURE raw_zone.sp_fact_wes_stock (BATCH_ID INT64, SOURCE_FILEDATE DATETIME, SERVICE_ACCOUNT_ID STRING)
+OPTIONS(strict_mode=false) 
+BEGIN
+
+--########################################################################
+--##Description    : raw_wes_stock  to fact_wes_stock
+--##Type           : SCD1
+--##Frequency      : Hourly
+--##Author         : Vibhu Varun Ravulapudi
+--##Version        : 1.0
+--##Version history:
+--
+--##version		Date		Author	    		            Changes
+--##1.0     	18-09-2023  Vibhu Varun Ravulapudi      	Initial version
+
+--##########################################################################
+
+--Declaring Variables
+
+DECLARE A_PZ_CREATED_BY STRING;
+DECLARE A_PZ_UPDATED_BY STRING;
+DECLARE A_SOURCE_FILEDATE DATETIME;
+DECLARE A_BATCH_ID INT64;
+
+--Assigning Variables
+
+SET A_PZ_CREATED_BY = SERVICE_ACCOUNT_ID;
+SET A_PZ_UPDATED_BY = SERVICE_ACCOUNT_ID;
+SET A_SOURCE_FILEDATE = SOURCE_FILEDATE ;
+SET A_BATCH_ID=BATCH_ID;
+
+-- Creating Temp Table 
+
+create or replace temp table temp_fact_wes_stock
+
+as 
+
+(
+SELECT * , 
+
+SHA256(concat(
+IFNULL(CAST(DISTRIBUTION_CENTER_SK AS STRING),'~|*'),
+IFNULL(CAST(ITEM_SK AS STRING),'~|*'),
+IFNULL(CAST(PARENT_NAME AS STRING),'~|*'),
+IFNULL(CAST(PARENT_TYPE AS STRING),'~|*'),
+IFNULL(CAST(STOCK_QTY AS STRING),'~|*'),
+IFNULL(CAST(ORIGINAL_QTY AS STRING),'~|*'),
+IFNULL(CAST(PICK_QTY AS STRING),'~|*'),
+IFNULL(CAST(ALLOCATION_QTY AS STRING),'~|*'),
+IFNULL(CAST(LAST_PICK_DATE_SK AS STRING),'~|*'),
+IFNULL(CAST(LAST_PICK_TIME_SK AS STRING),'~|*'),
+IFNULL(CAST(LAST_PICK_DATETIME AS STRING),'~|*'),
+IFNULL(CAST(FLAGS AS STRING),'~|*'),
+IFNULL(CAST(LOCK_CODE AS STRING),'~|*'),
+IFNULL(CAST(ADVANCED_SHIPPING_NOTICE AS STRING),'~|*'),
+IFNULL(CAST(PURCHASE_ORDER AS STRING),'~|*'),
+IFNULL(CAST(MERCHANDISE_GROUP AS STRING),'~|*'),
+IFNULL(CAST(MERCHANDISE_TYPE AS STRING),'~|*'),
+IFNULL(CAST(CASE_WEIGHT AS STRING),'~|*'),
+IFNULL(CAST(CASE_HEIGHT AS STRING),'~|*'),
+IFNULL(CAST(CASE_WIDTH AS STRING),'~|*'),
+IFNULL(CAST(CASE_LENGTH AS STRING),'~|*'),
+IFNULL(CAST(EXPIRATION_DATE_SK AS STRING),'~|*'),
+IFNULL(CAST(EXPIRATION_TIME_SK AS STRING),'~|*'),
+IFNULL(CAST(EXPIRATION_DATETIME AS STRING),'~|*'),
+IFNULL(CAST(UPDATED_DATE_SK AS STRING),'~|*'),
+IFNULL(CAST(UPDATED_TIME_SK AS STRING),'~|*'),
+IFNULL(CAST(UPDATED_DATETIME AS STRING),'~|*')
+ )) AS RECORD_TYPE1_HASHVALUE
+
+FROM ( 
+
+SELECT
+
+     ifnull(DIM_SITE.SITE_SK,-1) as DISTRIBUTION_CENTER_SK, -- Not Nullable
+     ifnull(nullif(lpad(DC_IDENTIFIER,4,'0'),''),'Not Applicable') as DISTRIBUTION_CENTER_ID, -- Not Nullable  -- PK
+	 ifnull(IDX,-1) as STOCK_SEQUENCE_NUM, -- Not Nullable  -- PK
+	 
+     dim_item_history.ITEM_SK as ITEM_SK,     	 
+	 
+     if(ltrim(SKU,'0') = '' OR nullif(SKU,'') is null OR SKU is null, 'Not Applicable',SKU) as ITEM_ID, -- Not Nullable  -- PK
+	 if(ltrim(STATUS,'0') = '' OR nullif(STATUS,'') is null OR STATUS is null, 'Not Applicable',STATUS) as STOCK_STATUS, -- Not Nullable  -- PK
+	 	 
+	 PARENTNAME as PARENT_NAME,
+	 PARENTTYPE as PARENT_TYPE,
+	 
+	 QTY as STOCK_QTY,
+	 ORIGQTY as ORIGINAL_QTY,
+	 PICKQTY as PICK_QTY,
+	 ALLOCQTY as ALLOCATION_QTY,
+	 
+	 --LOOKUP ON DIM_CALENDAR using TIMESTAMP, DATE(raw.TIMESTAMP)=DIM_CALENDAR.DAY_DATE and fetch the calendar_sk LAST_PICK_DATE_SK  
+     DIM_CALENDAR1.calendar_sk as LAST_PICK_DATE_SK,	 -- is TIMESTAMP --> LASTPICKTIME?
+     --Look up on DIM_TIME using  convert_to_12_hour_format(extarct_time(raw.LASTPICKTIME)) = DIM_TIME.TIME_12 and fetch the TIME_SK LAST_PICK_TIME_SK
+	 DIM_TIME1.TIME_SK as LAST_PICK_TIME_SK, -- LASTPICKTIME is it nullable?
+	 
+	 LASTPICKTIME as LAST_PICK_DATETIME,
+	 
+     flags as flags,
+	 LOCKCODE     as LOCK_CODE,
+	 
+	 ASN          as ADVANCED_SHIPPING_NOTICE,
+     PO           as PURCHASE_ORDER,
+     MERCHGROUP   as MERCHANDISE_GROUP,
+     MERCHTYPE    as MERCHANDISE_TYPE,
+     
+	 ifnull(CASEWEIGHT,0.0)   as CASE_WEIGHT,        --getting null
+     ifnull(CASEHEIGHT,0.0)   as CASE_HEIGHT,        --getting null
+     ifnull(CASEWIDTH,0.0)    as CASE_WIDTH,         --getting null
+     ifnull(CASELENGTH,0.0)   as CASE_LENGTH,        --getting null
+	 
+	 --LOOKUP ON DIM_CALENDAR using EXPIRATIONDATE, DATE(raw.EXPIRATIONDATE)=DIM_CALENDAR.DAY_DATE and fetch the calendar_sk	 	EXPIRATION_DATE_SK
+     DIM_CALENDAR2.calendar_sk as EXPIRATION_DATE_SK,
+	 --Look up on DIM_TIME using  convert_to_12_hour_format(extarct_time(raw.EXPIRATIONDATE)) = DIM_TIME.TIME_12 and fetch the TIME_SK	 	EXPIRATION_TIME_SK
+     DIM_TIME2.TIME_SK         as EXPIRATION_TIME_SK,
+	 
+	 EXPIRATIONDATE as EXPIRATION_DATETIME,
+	  
+	 --LOOKUP ON DIM_CALENDAR using UPDATETIME, DATE(raw.UPDATETIME)=DIM_CALENDAR.DAY_DATE and fetch the calendar_sk	 	UPDATED_DATE_SK
+	 DIM_CALENDAR3.calendar_sk                as UPDATED_DATE_SK,
+	 --Look up on DIM_TIME using  convert_to_12_hour_format(extarct_time(raw.UPDATETIME)) = DIM_TIME.TIME_12 and fetch the TIME_SK	 	UPDATED_TIME_SK
+     DIM_TIME3.TIME_SK                        as UPDATED_TIME_SK,
+	 
+     UPDATETIME as UPDATED_DATETIME,
+
+--   Generated Key  as RECORD_TYPE1_HASHVALUE,	  
+
+--   ETL Fields
+     A_BATCH_ID           as BATCH_ID,
+     SOURCE_SYSTEMNAME    as SOURCE_SYSTEM_NAME,
+     ifnull(UPDATETIME,'0001-01-01T00:00:00') as SOURCE_CREATED_DATE,
+     ifnull(UPDATETIME,'0001-01-01T00:00:00') as SOURCE_UPDATED_DATE,
+	 cast(null as string) as SOURCE_CREATED_BY,
+	 cast(null as string) as SOURCE_UPDATED_BY,
+     current_datetime()   as PZ_CREATED_DATE,
+     current_datetime()   as PZ_UPDATED_DATE,
+     A_PZ_CREATED_BY      AS PZ_CREATED_BY,
+     A_PZ_UPDATED_BY      AS PZ_UPDATED_BY
+   
+	
+	 FROM 
+	 (
+	 select * from raw_zone.raw_wes_stock 
+     WHERE 
+     SOURCE_FILEDATE  = A_SOURCE_FILEDATE AND BATCH_ID = A_BATCH_ID AND 
+     DQ_VALIDATION_FLAG in ('Yes','Warn') AND
+	 date(UPDATETIME) >= DATE_SUB(DATE_TRUNC(CURRENT_DATE(), YEAR), INTERVAL 7 YEAR)
+	 
+	 --QUALIFY ROW_NUMBER() OVER
+	 --(PARTITION BY 
+	 --ifnull(nullif(lpad(DC_IDENTIFIER,4,'0'),''),'Not Applicable'),
+	 --ifnull(IDX,-1),
+	 --if(ltrim(SKU,'0') = '' OR nullif(SKU,'') is null OR SKU is null, 'Not Applicable',SKU),
+	 --if(ltrim(STATUS,'0') = '' OR nullif(STATUS,'') is null OR STATUS is null, 'Not Applicable',STATUS)
+	 --ORDER BY SOURCE_FILEDATE DESC, INGEST_DATE DESC) = 1
+	 ) raw
+	 
+     left join p_masterdata.dim_site DIM_SITE
+     on  ifnull(nullif(lpad(raw.DC_IDENTIFIER,4,'0'),''),'Not Applicable') = DIM_SITE.SITE_ID and
+     raw.UPDATETIME between DIM_SITE.RECORD_EFF_START_DTTM and DIM_SITE.RECORD_EFF_END_DTTM
+	 
+	 left join p_masterdata.dim_item_history dim_item_history
+     on if(ltrim(SKU,'0') = '' OR nullif(SKU,'') is null OR SKU is null, 'Not Applicable',SKU) = dim_item_history.ITEM_ID
+	 and raw.UPDATETIME between dim_item_history.RECORD_EFF_START_DTTM and dim_item_history.RECORD_EFF_END_DTTM
+     
+	 left join p_masterdata.dim_calendar DIM_CALENDAR1
+     on DATE(raw.LASTPICKTIME)=DIM_CALENDAR1.DAY_DATE
+	 
+	 LEFT JOIN p_masterdata.dim_time DIM_TIME1
+     ON format_time('%I:%M:%S %p',TIME(raw.LASTPICKTIME)) = DIM_TIME1.TIME_12
+	 	 
+     left join p_masterdata.dim_calendar DIM_CALENDAR2
+     on DATE(raw.EXPIRATIONDATE)=DIM_CALENDAR2.DAY_DATE	 
+	 
+	 LEFT JOIN p_masterdata.dim_time DIM_TIME2
+     ON format_time('%I:%M:%S %p',TIME(raw.EXPIRATIONDATE)) = DIM_TIME2.TIME_12
+	 
+     left join p_masterdata.dim_calendar DIM_CALENDAR3
+     on DATE(raw.UPDATETIME)=DIM_CALENDAR3.DAY_DATE
+	 
+	 LEFT JOIN p_masterdata.dim_time DIM_TIME3
+     ON format_time('%I:%M:%S %p',TIME(raw.UPDATETIME)) = DIM_TIME3.TIME_12
+
+	
+ ));
+ 
+MERGE into p_supplychain.fact_wes_stock  f
+
+USING temp_fact_wes_stock  a
+ 
+ON
+    f.DISTRIBUTION_CENTER_ID = a.DISTRIBUTION_CENTER_ID and
+    f.STOCK_SEQUENCE_NUM     = a.STOCK_SEQUENCE_NUM and
+    f.ITEM_ID                = a.ITEM_ID and
+    f.STOCK_STATUS           = a.STOCK_STATUS and
+    f.SOURCE_CREATED_DATE IS NOT NULL
+  
+WHEN MATCHED AND
+    f.RECORD_TYPE1_HASHVALUE != a.RECORD_TYPE1_HASHVALUE 
+  
+THEN UPDATE SET  
+    
+    DISTRIBUTION_CENTER_SK = a.DISTRIBUTION_CENTER_SK,
+    ITEM_SK = a.ITEM_SK,
+    PARENT_NAME = a.PARENT_NAME,
+    PARENT_TYPE = a.PARENT_TYPE,
+    STOCK_QTY = a.STOCK_QTY,
+    ORIGINAL_QTY = a.ORIGINAL_QTY,
+    PICK_QTY = a.PICK_QTY,
+    ALLOCATION_QTY = a.ALLOCATION_QTY,
+    LAST_PICK_DATE_SK = a.LAST_PICK_DATE_SK,
+    LAST_PICK_TIME_SK = a.LAST_PICK_TIME_SK,
+    LAST_PICK_DATETIME = a.LAST_PICK_DATETIME,
+    FLAGS = a.FLAGS,
+    LOCK_CODE = a.LOCK_CODE,
+    ADVANCED_SHIPPING_NOTICE = a.ADVANCED_SHIPPING_NOTICE,
+    PURCHASE_ORDER = a.PURCHASE_ORDER,
+    MERCHANDISE_GROUP = a.MERCHANDISE_GROUP,
+    MERCHANDISE_TYPE = a.MERCHANDISE_TYPE,
+    CASE_WEIGHT = a.CASE_WEIGHT,
+    CASE_HEIGHT = a.CASE_HEIGHT,
+    CASE_WIDTH = a.CASE_WIDTH,
+    CASE_LENGTH = a.CASE_LENGTH,
+    EXPIRATION_DATE_SK = a.EXPIRATION_DATE_SK,
+    EXPIRATION_TIME_SK = a.EXPIRATION_TIME_SK,
+    EXPIRATION_DATETIME = a.EXPIRATION_DATETIME,
+    UPDATED_DATE_SK = a.UPDATED_DATE_SK,
+    UPDATED_TIME_SK = a.UPDATED_TIME_SK,
+    UPDATED_DATETIME = a.UPDATED_DATETIME,
+
+	RECORD_TYPE1_HASHVALUE = a.RECORD_TYPE1_HASHVALUE,
+	
+    BATCH_ID                           = A_BATCH_ID,
+	SOURCE_UPDATED_DATE                = a.SOURCE_UPDATED_DATE,
+    SOURCE_CREATED_BY                  = a.SOURCE_CREATED_BY,
+    SOURCE_UPDATED_BY                  = a.SOURCE_UPDATED_BY,
+	PZ_UPDATED_DATE                    = a.PZ_UPDATED_DATE,
+    PZ_CREATED_BY                      = a.PZ_CREATED_BY,
+	PZ_UPDATED_BY                      = a.PZ_UPDATED_BY
+	
+WHEN NOT MATCHED THEN
+INSERT
+(
+DISTRIBUTION_CENTER_SK,
+DISTRIBUTION_CENTER_ID,
+STOCK_SEQUENCE_NUM,
+ITEM_SK,
+ITEM_ID,
+STOCK_STATUS,
+PARENT_NAME,
+PARENT_TYPE,
+STOCK_QTY,
+ORIGINAL_QTY,
+PICK_QTY,
+ALLOCATION_QTY,
+LAST_PICK_DATE_SK,
+LAST_PICK_TIME_SK,
+LAST_PICK_DATETIME,
+FLAGS,
+LOCK_CODE,
+ADVANCED_SHIPPING_NOTICE,
+PURCHASE_ORDER,
+MERCHANDISE_GROUP,
+MERCHANDISE_TYPE,
+CASE_WEIGHT,
+CASE_HEIGHT,
+CASE_WIDTH,
+CASE_LENGTH,
+EXPIRATION_DATE_SK,
+EXPIRATION_TIME_SK,
+EXPIRATION_DATETIME,
+UPDATED_DATE_SK,
+UPDATED_TIME_SK,
+UPDATED_DATETIME,
+RECORD_TYPE1_HASHVALUE,
+BATCH_ID,
+SOURCE_SYSTEM_NAME,
+SOURCE_CREATED_DATE,
+SOURCE_UPDATED_DATE,
+SOURCE_CREATED_BY,
+SOURCE_UPDATED_BY,
+PZ_CREATED_DATE,
+PZ_UPDATED_DATE,
+PZ_CREATED_BY,
+PZ_UPDATED_BY
+)
+
+VALUES
+(
+a.DISTRIBUTION_CENTER_SK,
+a.DISTRIBUTION_CENTER_ID,
+a.STOCK_SEQUENCE_NUM,
+a.ITEM_SK,
+a.ITEM_ID,
+a.STOCK_STATUS,
+a.PARENT_NAME,
+a.PARENT_TYPE,
+a.STOCK_QTY,
+a.ORIGINAL_QTY,
+a.PICK_QTY,
+a.ALLOCATION_QTY,
+a.LAST_PICK_DATE_SK,
+a.LAST_PICK_TIME_SK,
+a.LAST_PICK_DATETIME,
+a.FLAGS,
+a.LOCK_CODE,
+a.ADVANCED_SHIPPING_NOTICE,
+a.PURCHASE_ORDER,
+a.MERCHANDISE_GROUP,
+a.MERCHANDISE_TYPE,
+a.CASE_WEIGHT,
+a.CASE_HEIGHT,
+a.CASE_WIDTH,
+a.CASE_LENGTH,
+a.EXPIRATION_DATE_SK,
+a.EXPIRATION_TIME_SK,
+a.EXPIRATION_DATETIME,
+a.UPDATED_DATE_SK,
+a.UPDATED_TIME_SK,
+a.UPDATED_DATETIME,
+a.RECORD_TYPE1_HASHVALUE,
+BATCH_ID,
+a.SOURCE_SYSTEM_NAME,
+a.SOURCE_CREATED_DATE,
+a.SOURCE_UPDATED_DATE,
+a.SOURCE_CREATED_BY,
+a.SOURCE_UPDATED_BY,
+a.PZ_CREATED_DATE,
+a.PZ_UPDATED_DATE,
+a.PZ_CREATED_BY,
+a.PZ_UPDATED_BY
+);
+
+END;
