@@ -2,12 +2,12 @@
 # Description : BIC_AZSCCOFA062_hist  to fact_wes_stock                                                                        #
 # Type : one time (history)                                                                                                    #
 # Frequency: one time                                                                                                          #
-# Author : Vibhu Varun Ravulapudi                                                                                              #
+# Author : Nekenduku ra                                                                                             #
 # Version : 1.0                                                                                                                #
 # Version history: #                                                                                                           #
 # ##############################################################################################################################
 #   Version         Date            Author                     Changes                                                         #
-#     1.0           19-09-2023   Vibhu Varun Ravulapudi      	Initial version                                                # 
+#     1.0           19-09-2023   Nene Thopu Python Coder      	Initial version                                                # 
 ################################################################################################################################
 
 from airflow import DAG
